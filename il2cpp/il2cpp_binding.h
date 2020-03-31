@@ -101,7 +101,7 @@ struct MethodHook : public MethodHookBase<std::optional<Ret>, Args...> {
 		auto memFn = &MethodHook<Ret, Args...>::invoke;
 		auto data = ctx->getBinding().getDataForInvocation(*(void**)&memFn);
 
-		ThisPtr ths((void*)this, data.klass);
+		ThisPtr ths(internal::Il2CppObject{ this }, data.klass);
 
 		MethodInvocationContext methodCtx(*ctx, sizeof(Ret));
 		invoke_all(methodCtx, static_cast<Ret(__thiscall *)(void*, Args...)>(data.originalFn), static_cast<Node *>(data.node), ths, args...);
