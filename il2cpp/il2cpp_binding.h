@@ -5,6 +5,7 @@
 #include <algorithm>
 #include "functional_type.h"
 
+#include "semver.h"
 #include "il2cpp_types.h"
 
 class il2cpp_context;
@@ -284,4 +285,9 @@ private:
 	std::vector<HookCall> mHooks;
 	std::unordered_map<std::string, size_t> mHooksByMethodName;
 	std::unordered_map<void *, size_t> mHooksByInvocation;
+};
+
+struct ModDeclaration {
+	semver bindingVersion;
+	const char *modName;
 };
