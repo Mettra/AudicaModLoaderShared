@@ -1,34 +1,133 @@
 #pragma once
-#include <vector>
 #include <functional>
 #include <optional>
 #include <algorithm>
+#include <memory>
 #include "functional_type.h"
 
 #include "semver.h"
 #include "il2cpp_types.h"
+#include "binding_template_helpers.h"
 
+#include <cstddef>
+
+const static semver BindingVersion = { 2, 0, 0 };
 class il2cpp_context;
+using u8 = unsigned char;
+
+#define API_BREAK_OFFSET_MESSAGE(_Type, _Member) "The offset of " #_Type "::" #_Member " has changed! This will cause an API break. If this is intented, update this assert and increment the MAJOR number in the BindingVersion semver"
+#define ENFORCE_TYPE_OFFSET(_Type, _Member, _Offset) static_assert(offsetof(_Type, _Member) == _Offset, API_BREAK_OFFSET_MESSAGE(_Type, _Member))
+
+struct MethodInvocationStorage {
+	template<size_t... I, typename... Args>
+	void setArgs(std::index_sequence<I...>, std::tuple<Args*...> &&args) {
+		(setArg(I, *std::get<I>(args)), ...);
+	}
+
+	~MethodInvocationStorage() {
+		free(mReturnData);
+		free(mArgs);
+		free(mArgOffset);
+	}
+
+	template<typename Ret, typename... Args>
+	void initialize(std::tuple<Args*...> &&args) {
+		uint32_t retSize = 0;
+		if constexpr (!std::is_same_v<Ret, void>) {
+			mReturnData = (u8*)malloc(sizeof(Ret));
+		}
+
+		if constexpr (sizeof...(Args) > 0) {
+			mArgs = (u8*)malloc((sizeof(Args) + ...));
+			mNumArgs = sizeof...(Args);
+
+			using OffsetType = std::decay_t<decltype(*mArgOffset)>;
+
+			std::vector<OffsetType> offsets = { 0, sizeof(Args)..., };
+			for (size_t i = 2; i < offsets.size(); ++i) {
+				offsets[i] += offsets[i - 1];
+			}
+			offsets.resize(offsets.size() - 1);
+
+			mArgOffset = (OffsetType*)malloc(offsets.size() * sizeof(OffsetType));
+			std::memcpy(mArgOffset, offsets.data(), offsets.size() * sizeof(OffsetType));
+		}
+
+		setArgs(std::index_sequence_for<Args...>{}, std::move(args));
+	}
+
+	template<typename T>
+	struct ReturnSpecialize {
+		static const T& getReturn(const MethodInvocationStorage& st) {
+			return *(T*)st.mReturnData;
+		}
+	};
+
+	template<>
+	struct ReturnSpecialize<void> {
+		static void getReturn(const MethodInvocationStorage&) {}
+	};
+
+	template<typename T>
+	auto getReturn() const {
+		return ReturnSpecialize<T>::getReturn(*this);
+	}
+
+	template<typename T>
+	void setReturn(T&& value) {
+		*(T*)mReturnData = std::move(value);
+	}
+
+	template<typename T>
+	const T& getArg(uint32_t idx) const {
+		if (idx < 0 || idx >= mNumArgs) { throw std::out_of_range("Attempt to access argument that does not exist!"); }
+		return *(T*)(mArgs + mArgOffset[idx]);
+	}
+
+	template<typename T>
+	void setArg(uint32_t idx, T value) {
+		if (idx < 0 || idx >= mNumArgs) { throw std::out_of_range("Attempt to access argument that does not exist!"); }
+		*(T*)(mArgs + mArgOffset[idx]) = value;
+	}
+
+	uint8_t *mReturnData = nullptr;
+	uint8_t* mArgs = nullptr;
+	uint32_t *mArgOffset = nullptr;
+	uint32_t mNumArgs = 0;
+};
+ENFORCE_TYPE_OFFSET(MethodInvocationStorage, mReturnData, 0);
+ENFORCE_TYPE_OFFSET(MethodInvocationStorage, mArgs, 8);
+ENFORCE_TYPE_OFFSET(MethodInvocationStorage, mArgOffset, 16);
+ENFORCE_TYPE_OFFSET(MethodInvocationStorage, mNumArgs, 24);
 
 class MethodInvocationContext {
 public:
-	MethodInvocationContext(const il2cpp_context &ctx, size_t returnData) 
-		: mCtx(ctx) {
-		mReturnData.resize(returnData);
+	MethodInvocationContext(const il2cpp_context &ctx, std::unique_ptr<MethodInvocationStorage> &&storage)
+		: mCtx(&ctx), mStorage(std::move(storage)) {
 	}
 
 	const il2cpp_context &getGlobalContext() const {
-		return mCtx;
+		return *mCtx;
 	}
 
 	template<typename T>
-	const T& getReturn() const {
-		return *(T*)mReturnData.data();
+	auto getReturn() const {
+		return mStorage->getReturn<T>();
 	}
 
 	template<typename T>
-	void setReturn(T&& ret) {
-		*(T*)mReturnData.data() = std::move(ret);
+	void setReturn(T&& value) {
+		return mStorage->setReturn(std::move(value));
+	}
+
+	template<typename T>
+	auto getArg(uint32_t idx) const {
+		return mStorage->getArg<T>(idx);
+	}
+
+	template<typename T>
+	void setArg(uint32_t idx, T&& value) {
+		return mStorage->setArg(idx, std::move(value));
 	}
 
 	void stopExecution() const {
@@ -39,255 +138,279 @@ public:
 		return mStopExecution;
 	}
 
-
 private:
-	const il2cpp_context &mCtx;
-	std::vector<uint8_t> mReturnData;
+	const il2cpp_context *mCtx;
+	std::unique_ptr<MethodInvocationStorage> mStorage;
 	mutable bool mStopExecution = false;
+
+	void _enforceSize() {
+		ENFORCE_TYPE_OFFSET(MethodInvocationContext, mCtx, 0);
+		ENFORCE_TYPE_OFFSET(MethodInvocationContext, mStorage, 8);
+		ENFORCE_TYPE_OFFSET(MethodInvocationContext, mStopExecution, 16);
+	}
 };
 
+struct MethodHookNode {
+	MethodHookNode *next;
+	InvokeTime invokeTime = InvokeTime::Before;
+	int priority = 0;
+	void *data;
+};
+ENFORCE_TYPE_OFFSET(MethodHookNode, next, 0);
+ENFORCE_TYPE_OFFSET(MethodHookNode, invokeTime, 8);
+ENFORCE_TYPE_OFFSET(MethodHookNode, priority, 12);
+ENFORCE_TYPE_OFFSET(MethodHookNode, data, 16);
 
-template<typename Ret, typename... Args>
-struct MethodHookBase {
+template<bool isThisCall, typename FnRet, typename... Args>
+struct MethodHook {
+	using Fn = ThisCallSpecializeTypes<isThisCall>::Fn<FnRet, Args...>;
+	using Ret = typename ReturnTypeSpecialization<FnRet>::type;
+
 	struct Node {
-		std::function<Ret(const MethodInvocationContext& ctx, ThisPtr, Args...)> fn;
-		InvokeTime invokeTime = InvokeTime::Before;
-		int priority = 0;
-		Node *next = nullptr;
+		Fn fn;
 	};
+	ENFORCE_TYPE_OFFSET(Node, fn, 0);
 
-	static Node *getNewNode(std::function<Ret(const MethodInvocationContext&, ThisPtr, Args...)> &&fn, InvokeTime invokeTime, int priority = 0) {
-		Node *node = new Node();
-		node->fn = std::move(fn);
+	static MethodHookNode *getNewNode(Fn &&fn, InvokeTime invokeTime, int priority = 0) {
+		Node *nodeData = new Node();
+		nodeData->fn = std::move(fn);
+
+		MethodHookNode *node = new MethodHookNode();
 		node->priority = priority;
 		node->invokeTime = invokeTime;
+		node->data = nodeData;
+
 		return node;
 	}
 
-	static void *sortNodes(void *start_void) {
-		Node *start = static_cast<Node *>(start_void);
-
-		std::vector<Node *> allNodes;
-		Node *current = start;
-		while (current != nullptr) {
-			allNodes.emplace_back(current);
-			current = current->next;
+private:
+	template<size_t... I>
+	static void _invokeNodeFunction(MethodInvocationContext &ctx, std::optional<ThisPtr> ths, Node *node, std::index_sequence<I...>) {
+		if constexpr (isThisCall) {
+			if constexpr (std::is_same_v<Ret, void>) {
+				node->fn(ctx, *ths, ctx.getArg<Args>(I)...);
+			}
+			else {
+				auto v = node->fn(ctx, *ths, ctx.getArg<Args>(I)...);
+				if (v) {
+					ctx.setReturn(v.value());
+				}
+			}
 		}
-
-		std::sort(allNodes.begin(), allNodes.end(), [](Node *lhs, Node *rhs) {
-			return lhs->priority < rhs->priority;
-		});
-
-		Node *prev = allNodes[0];
-		for (int i = 1; i < allNodes.size(); ++i) {
-			prev->next = allNodes[i];
-			prev = allNodes[i];
+		else {
+			if constexpr (std::is_same_v<Ret, void>) {
+				node->fn(ctx, ctx.getArg<Args>(I)...);
+			}
+			else {
+				auto v = node->fn(ctx, ctx.getArg<Args>(I)...);
+				if (v) {
+					ctx.setReturn(v.value());
+				}
+			}
 		}
-
-		prev->next = nullptr;
-		return allNodes[0];
 	}
 
-	static const il2cpp_context *ctx;
+	template<size_t... I>
+	static void _invokeOriginalFunction(MethodInvocationContext &ctx, void *ths, void *originalFn, std::index_sequence<I...>) {
+		if constexpr (isThisCall) {
+			auto fn = static_cast<Ret(*)(void*, Args...)>(originalFn);
+
+			if constexpr (std::is_same_v<Ret, void>) {
+				fn(ths, ctx.getArg<Args>(I)...);
+			}
+			else {
+				auto ret = fn(ths, ctx.getArg<Args>(I)...);
+				ctx.setReturn(std::move(ret));
+			}
+		}
+		else {
+			auto fn = static_cast<Ret(*)(Args...)>(originalFn);
+			if constexpr (std::is_same_v<Ret, void>) {
+				fn(ctx.getArg<Args>(I)...);
+			}
+			else {
+				auto ret = fn(ctx.getArg<Args>(I)...);
+				ctx.setReturn(std::move(ret));
+			}
+		}
+	}
+
+public:
+	static void invokeNodeFunction(MethodInvocationContext &ctx, std::optional<ThisPtr> ths, void *nodeData) {
+		Node *node = static_cast<Node *>(nodeData);
+		_invokeNodeFunction(ctx, ths, node, std::index_sequence_for<Args...>{});
+	}
+
+	static void invokeOriginalFunction(MethodInvocationContext &ctx, void *ths, void *originalFn) {
+		_invokeOriginalFunction(ctx, ths, originalFn, std::index_sequence_for<Args...>{});
+	}
 };
 
-template<typename Ret, typename... Args>
-const il2cpp_context *MethodHookBase<Ret, Args...>::ctx = nullptr;
+struct FunctionChainInvoker {
+	static const il2cpp_context *&getContext() {
+		static const il2cpp_context *ctx = nullptr;
+		return ctx;
+	}
 
-template<typename Ret, typename... Args>
-struct MethodHook : public MethodHookBase<std::optional<Ret>, Args...> {
-	using Node = typename MethodHookBase<std::optional<Ret>, Args...>::Node;
+	template<bool isThisCall, typename Ret, typename... Args>
+	static __declspec(noinline) Ret invoke(std::optional<void *> ths, std::tuple<Args*...> &&argBuffer) {
+		auto methodStorage = std::make_unique<MethodInvocationStorage>();
+		methodStorage->initialize<Ret, Args...>(std::move(argBuffer));
 
-	__declspec(noinline) Ret invoke(Args... args) {
-		auto memFn = &MethodHook<Ret, Args...>::invoke;
-		auto data = ctx->getBinding().getDataForInvocation(*(void**)&memFn);
+		MethodInvocationContext methodCtx(*getContext(), std::move(methodStorage));
 
-		ThisPtr ths(internal::Il2CppObject{ this }, data.klass);
+		getContext()->getBinding().InvokeFunctionChain(methodCtx, ths);
 
-		MethodInvocationContext methodCtx(*ctx, sizeof(Ret));
-		invoke_all(methodCtx, static_cast<Ret(__thiscall *)(void*, Args...)>(data.originalFn), static_cast<Node *>(data.node), ths, args...);
 		return methodCtx.getReturn<Ret>();
 	}
-
-	template<typename std::size_t... I>
-    static void invoke_all(MethodInvocationContext& ctx, Ret(*originalFn)(void*, Args...), Node *invokeList, ThisPtr ths, Args... args) {
-        Node *current = invokeList;
-        while(current != nullptr) {
-            if(current->invokeTime == InvokeTime::Before) {
-                auto ret = current->fn(ctx, ths, args...);
-                if(ret) {
-					ctx.setReturn(std::move(ret.value()));
-                }
-
-				if (ctx.didStopExecution()) {
-					return;
-				}
-            }
-
-            current = current->next;
-        }
-
-        auto originalRet = originalFn(ths.ptr, args...);
-		ctx.setReturn(std::move(originalRet));
-
-        current = invokeList;
-        while(current != nullptr) {
-            if(current->invokeTime == InvokeTime::After) {
-                auto ret = current->fn(ctx, ths, args...);
-                if(ret) {
-					ctx.setReturn(std::move(ret.value()));
-                }
-
-				if (ctx.didStopExecution()) {
-					return;
-				}
-            }
-
-            current = current->next;
-        }
-    }
 };
 
-template<typename... Args>
-struct MethodHook<void, Args...> : public MethodHookBase<void, Args...> {
-	using Ret = void;
-	using Node = typename MethodHookBase<Ret, Args...>::Node;
+template<bool isThisCall, typename Ret, typename... Args>
+__declspec(noinline) Ret __thiscall invokeMemberFunction(void *ths, Args... args) {
+	auto argTuple = std::tuple<Args*...>(&args...);
+	return FunctionChainInvoker::invoke<isThisCall, Ret, Args...>(ths, std::move(argTuple));
+}
 
-	__declspec(noinline) Ret invoke(Args... args) {
-		auto memFn = &MethodHook<Ret, Args...>::invoke;
-		auto data = ctx->getBinding().getDataForInvocation(*(void**)&memFn);
-		ThisPtr ths(internal::Il2CppObject{ this }, data.klass);
-
-		MethodInvocationContext methodCtx(*ctx, 0);
-		invoke_all(methodCtx, static_cast<Ret(__thiscall *)(void*, Args...)>(data.originalFn), static_cast<Node *>(data.node), ths, args...);
-	}
-
-	template<typename std::size_t... I>
-	static Ret invoke_all(MethodInvocationContext& ctx, Ret(*originalFn)(void*, Args...), Node *invokeList, ThisPtr ths, Args... args) {
-		Node *current = invokeList;
-		while (current != nullptr) {
-			if (current->invokeTime == InvokeTime::Before) {
-				current->fn(ctx, ths, args...);
-				if (ctx.didStopExecution()) {
-					return;
-				}
-			}
-
-			current = current->next;
-		}
-
-		originalFn(ths.ptr, args...);
-
-		current = invokeList;
-		while (current != nullptr) {
-			if (current->invokeTime == InvokeTime::After) {
-				current->fn(ctx, ths, args...);
-				if (ctx.didStopExecution()) {
-					return;
-				}
-			}
-
-			current = current->next;
-		}
-	}
-};
-
-template<typename T>
-struct is_valid_function_type {
-	static const bool value = false;
-};
-
-template<typename Ret, typename... Args>
-struct is_valid_function_type<std::function<Ret(Args...)>> {
-	using tuple_type = std::tuple<Args...>;
-	static const bool value = std::is_same_v<std::tuple_element_t<0, tuple_type>, const MethodInvocationContext&> && std::is_same_v<std::tuple_element_t<1, tuple_type>, ThisPtr>;
-};
+template<bool isThisCall, typename Ret, typename... Args>
+static __declspec(noinline) Ret invokeStaticFunction(Args... args) {
+	auto argTuple = std::tuple<Args*...>(&args...);
+	return FunctionChainInvoker::invoke<isThisCall, Ret, Args...>(std::nullopt, std::move(argTuple));
+}
 
 class il2cpp_binding {
 public:
-	il2cpp_binding(const il2cpp_context &ctx);
-
-
 	struct HookCall {
 		void *originalFn = nullptr;
 		void *invokeFn = nullptr;
-		void *node = nullptr;
-		void *(*sortFn)(void *) = nullptr;
+		MethodHookNode *node = nullptr;
 		il2cppapi::Class *klass = nullptr;
-	};
 
+		uint64_t id;
+		void *uniqueFn = nullptr;
+
+		void(*invokeNodeFunction)(MethodInvocationContext &ctx, std::optional<ThisPtr> ths, void *node) = nullptr;
+		void(*invokeOriginalFunction)(MethodInvocationContext &ctx, void *ths, void *originalFn) = nullptr;
+		semver hookVersion = BindingVersion;
+	};
+	ENFORCE_TYPE_OFFSET(HookCall, originalFn, 0);
+	ENFORCE_TYPE_OFFSET(HookCall, invokeFn, 8);
+	ENFORCE_TYPE_OFFSET(HookCall, node, 16);
+	ENFORCE_TYPE_OFFSET(HookCall, klass, 24);
+	ENFORCE_TYPE_OFFSET(HookCall, id, 32);
+	ENFORCE_TYPE_OFFSET(HookCall, uniqueFn, 40);
+	ENFORCE_TYPE_OFFSET(HookCall, invokeNodeFunction, 48);
+	ENFORCE_TYPE_OFFSET(HookCall, invokeOriginalFunction, 56);
+	ENFORCE_TYPE_OFFSET(HookCall, hookVersion, 64);
+
+	//Explicit 
 	template<typename Ret, typename... Args>
-	void bindClassFunction(const std::string &namespaceName, const std::string& className, const std::string& methodName, InvokeTime invokeTime, int priority, std::function<Ret(const MethodInvocationContext& ctx, ThisPtr ths, Args...)> &&callback) {
+	void bindClassFunction(const char *namespaceName, const char *className, const char *methodName, InvokeTime invokeTime, int priority, std::function<Ret(const MethodInvocationContext& ctx, ThisPtr ths, Args...)> &&callback) {
+		static_assert(is_valid_return_type<Ret>::value, "Invalid function signature! Your function must either return `void`, or `std::optional<T>`");
 		_bindClassFunction(namespaceName, className, methodName, invokeTime, priority, std::move(callback));
 	}
 
+	template<typename Ret, typename... Args>
+	void bindStaticFunction(const char *namespaceName, const char *className, const char *methodName, InvokeTime invokeTime, int priority, std::function<Ret(const MethodInvocationContext& ctx, Args...)> &&callback) {
+		static_assert(is_valid_return_type<Ret>::value, "Invalid function signature! Your function must either return `void`, or `std::optional<T>`");
+		_bindStaticFunction(namespaceName, className, methodName, invokeTime, priority, std::move(callback));
+	}
+
+	//Passthrough + function signature check
 	template<typename Fn>
-	void bindClassFunction(const std::string &namespaceName, const std::string& className, const std::string& methodName, InvokeTime invokeTime, int priority, Fn &&callback) {
+	void bindClassFunction(const char *namespaceName, const char *className, const char *methodName, InvokeTime invokeTime, int priority, Fn &&callback) {
 		functional_type_t<Fn> fn = [callback = std::move(callback)](auto&&... args)
 		{
 			return callback(std::forward<decltype(args)>(args)...);
 		};
 
-		static_assert(is_valid_function_type<decltype(fn)>::value, "Invalid function signature! Make sure your function starts with `const MethodInvocationContext& ctx, ThisPtr ths`");
+		using TypeCheck = is_valid_function_type<decltype(fn)>;
+		static_assert(TypeCheck::hasContext, "Invalid function signature! Make sure your function starts with `const MethodInvocationContext& ctx`");
+		static_assert(TypeCheck::hasThisPtr, "Invalid function signature! Make sure your function's second parameter is `ThisPtr ths`");
+		static_assert(TypeCheck::hasValidReturn, "Invalid function signature! Your function must either return `void`, or `std::optional<T>`");
 
 		_bindClassFunction(namespaceName, className, methodName, invokeTime, priority, std::move(fn));
 	}
 
+	template<typename Fn>
+	void bindStaticFunction(const char *namespaceName, const char *className, const char *methodName, InvokeTime invokeTime, int priority, Fn &&callback) {
+		functional_type_t<Fn> fn = [callback = std::move(callback)](auto&&... args)
+		{
+			return callback(std::forward<decltype(args)>(args)...);
+		};
+
+		using TypeCheck = is_valid_function_type<decltype(fn)>;
+		static_assert(TypeCheck::hasContext, "Invalid function signature! Make sure your function starts with `const MethodInvocationContext& ctx`");
+		static_assert(TypeCheck::hasValidReturn, "Invalid function signature! Your function must either return `void`, or `std::optional<T>`");
+
+		_bindStaticFunction(namespaceName, className, methodName, invokeTime, priority, std::move(fn));
+	}
+
 	//Default priority binding, where priority = 0
 	template<typename Fn>
-	void bindClassFunction(const std::string &namespaceName, const std::string& className, const std::string& methodName, InvokeTime invokeTime, Fn &&fn) {
+	void bindClassFunction(const char *namespaceName, const char *className, const char *methodName, InvokeTime invokeTime, Fn &&fn) {
 		bindClassFunction(namespaceName, className, methodName, invokeTime, 0, std::move(fn));
 	}
 
-	const HookCall& getDataForInvocation(void *invokeFn) const;
-	const il2cpp_context& getIL2CPPContext() const;
+	template<typename Fn>
+	void bindStaticFunction(const char *namespaceName, const char *className, const char *methodName, InvokeTime invokeTime, Fn &&fn) {
+		bindStaticFunction(namespaceName, className, methodName, invokeTime, 0, std::move(fn));
+	}
 
-	void setupHooks();
+	////////////
+public:
+	void(*InvokeFunctionChain)(MethodInvocationContext &ctx, std::optional<void *> ths);
+protected:
+	const il2cpp_context& (*GetIL2CPPContext)(const il2cpp_binding &bnd);
+	void(*AddHookCall)(il2cpp_binding &bnd, const char *namespaceName, const char *className, const char *methodName, size_t numArgs, HookCall &&call);
+	////////////
+
+
 private:
-
-    void* _getCallList(const std::string &namespaceName, const std::string& className, const std::string& methodName);
-    void _setCallList(const std::string &namespaceName, const std::string& className, const std::string& methodName, void *node, void *invokeFn, void *(*sortFn)(void *), size_t numArgs);
-
-
-	template<typename Ret, typename... Args>
-	void _bindClassFunction(const std::string &namespaceName, const std::string& className, const std::string& methodName, InvokeTime invokeTime, int priority, std::function<std::optional<Ret>(const MethodInvocationContext& ctx, ThisPtr ths, Args...)> &&callback) {
-		auto *node = MethodHook<Ret, Args...>::getNewNode(std::move(callback), invokeTime, priority);
-		_bindClassFunction<Ret, Args...>(namespaceName, className, methodName, invokeTime, priority, node);
+	void _ensureSize() {
+		ENFORCE_TYPE_OFFSET(il2cpp_binding, InvokeFunctionChain, 0);
+		ENFORCE_TYPE_OFFSET(il2cpp_binding, GetIL2CPPContext, 8);
+		ENFORCE_TYPE_OFFSET(il2cpp_binding, AddHookCall, 16);
 	}
 
-	template<typename... Args>
-	void _bindClassFunction(const std::string &namespaceName, const std::string& className, const std::string& methodName, InvokeTime invokeTime, int priority, std::function<void(const MethodInvocationContext& ctx, ThisPtr ths, Args...)> &&callback) {
-		using FnRet = void;
-
-		auto *node = MethodHook<FnRet, Args...>::getNewNode(std::move(callback), invokeTime, priority);
-		_bindClassFunction<FnRet, Args...>(namespaceName, className, methodName, invokeTime, priority, node);
+private:
+	template<typename Ret, typename... Args>
+	void _bindClassFunction(const char *namespaceName, const char *className, const char *methodName, InvokeTime invokeTime, int priority, std::function<Ret(const MethodInvocationContext& ctx, ThisPtr ths, Args...)> &&callback) {
+		MethodHookNode *node = MethodHook<true, Ret, Args...>::getNewNode(std::move(callback), invokeTime, priority);
+		_bindFunction<true, Ret, Args...>(namespaceName, className, methodName, node);
 	}
 
 	template<typename Ret, typename... Args>
-	void _bindClassFunction(const std::string &namespaceName, const std::string& className, const std::string& methodName, InvokeTime invokeTime, int priority, typename MethodHook<Ret, Args...>::Node *node) {
-		auto callList = _getCallList(namespaceName, className, methodName);
-		if (callList == nullptr) {
-			auto memberFn = &MethodHook<Ret, Args...>::invoke;
-			_setCallList(namespaceName, className, methodName, node, *(void **)&memberFn, &MethodHook<Ret, Args...>::sortNodes, sizeof...(Args));
-			MethodHook<Ret, Args...>::ctx = &getIL2CPPContext();
+	void _bindStaticFunction(const char *namespaceName, const char *className, const char *methodName, InvokeTime invokeTime, int priority, std::function<Ret(const MethodInvocationContext& ctx, Args...)> &&callback) {
+		MethodHookNode *node = MethodHook<false, Ret, Args...>::getNewNode(std::move(callback), invokeTime, priority);
+		_bindFunction<false, Ret, Args...>(namespaceName, className, methodName, node);
+	}
+
+	template<bool isThisCall, typename Ret, typename... Args>
+	void _bindFunction(const char *namespaceName, const char *className, const char *methodName, MethodHookNode *node) {
+		using MethodHookType = typename MethodHook<isThisCall, Ret, Args...>;
+		FunctionChainInvoker::getContext() = &GetIL2CPPContext(*this);
+
+		HookCall call;
+		call.node = node;
+		call.invokeNodeFunction = &MethodHookType::invokeNodeFunction;
+		call.invokeOriginalFunction = &MethodHookType::invokeOriginalFunction;
+
+		if constexpr (isThisCall) {
+			auto invokeMemberFn = &invokeMemberFunction<isThisCall, typename ReturnTypeSpecialization<Ret>::type, Args...>;
+			call.invokeFn = *(void **)&invokeMemberFn;
 		}
 		else {
-			typename MethodHook<Ret, Args...>::Node *currentNode = static_cast<typename MethodHook<Ret, Args...>::Node *>(callList);
-			while (currentNode->next != nullptr) {
-				currentNode = currentNode->next;
-			}
-
-			currentNode->next = node;
+			auto invokeStaticFn = &invokeStaticFunction<isThisCall, typename ReturnTypeSpecialization<Ret>::type, Args...>;
+			call.invokeFn = *(void **)&invokeStaticFn;
 		}
-	}
 
-	const il2cpp_context &mCtx;
-	std::vector<HookCall> mHooks;
-	std::unordered_map<std::string, size_t> mHooksByMethodName;
-	std::unordered_map<void *, size_t> mHooksByInvocation;
+		AddHookCall(*this, namespaceName, className, methodName, sizeof...(Args), std::move(call));
+	}
 };
 
 struct ModDeclaration {
 	semver bindingVersion;
 	const char *modName;
 };
+ENFORCE_TYPE_OFFSET(ModDeclaration, bindingVersion, 0);
+ENFORCE_TYPE_OFFSET(ModDeclaration, modName, 16);

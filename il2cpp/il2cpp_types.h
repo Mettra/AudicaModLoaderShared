@@ -133,23 +133,13 @@ namespace il2cppapi {
         Class(const il2cpp_context& ctx, internal::Il2CppClass *klass) : ctx(ctx), klass(klass) {}
 
         template<typename Fn>
-        typename function_traits<Fn>::PtrType method(const std::string &methodName) const {
-            auto it = methods.find(methodName);
-            if (it != methods.end()) {
-                return static_cast<typename function_traits<Fn>::PtrType>(it->second);
-            }
-
-            auto internalMethod = ctx.getClassMethod(klass, methodName, function_traits<Fn>::numArgs);
-            if (!internalMethod) {
-                return nullptr;
-            }
-
-			methods.emplace(std::make_pair(methodName, internalMethod->methodPtr));
-            return static_cast<typename function_traits<Fn>::PtrType>(internalMethod->methodPtr);
+        typename function_traits<Fn>::PtrType method(const char *methodName) const {
+			auto fn = mGetMethod(this, methodName, function_traits<Fn>::numArgs);
+			return static_cast<typename function_traits<Fn>::PtrType>(fn);
         }
 
 		template<typename T>
-		Field<T> field(internal::Il2CppObject obj, const std::string &fieldName) const {
+		Field<T> field(internal::Il2CppObject obj, const char *fieldName) const {
 			auto internalField = ctx.getClassFieldInfo(klass, fieldName, false);
 			if (internalField != nullptr) {
 				return Field<T>(ctx, obj, internalField);
@@ -161,13 +151,13 @@ namespace il2cppapi {
 				return Field<T>(ctx, obj, internalProperty);
 			}
 
-			printf("ERROR: Cannot find field/property %s for class!", fieldName.c_str());
+			printf("ERROR: Cannot find field/property %s for class!", fieldName);
 			const internal::FieldInfo *null = nullptr;
 			return Field<T>(ctx, obj, null);
 		}
 
 		template<typename T>
-		Field<T> static_field(const std::string &fieldName) const {
+		Field<T> static_field(const char *fieldName) const {
 			auto internalField = ctx.getClassFieldInfo(klass, fieldName);
 			return Field<T>(ctx, internal::Il2CppObject{ nullptr }, internalField);
 		}
@@ -176,10 +166,10 @@ namespace il2cppapi {
 			return klass;
 		}
 
-    private:
+    protected:
         const il2cpp_context& ctx;
         internal::Il2CppClass *klass;
-        mutable std::unordered_map<std::string, const void *> methods;
+		const void * (*mGetMethod)(const Class *, const char *, uint32_t);
     };
 
     struct Object {
@@ -189,17 +179,17 @@ namespace il2cppapi {
         Class *klass;
 
         template<typename Fn>
-        typename function_traits<Fn>::PtrType method(const std::string &methodName) const {
+        typename function_traits<Fn>::PtrType method(const char *methodName) const {
             return klass->method<Fn>(methodName);
         }
 
 		template<typename T>
-		Field<T> field(const std::string &fieldName) const {
+		Field<T> field(const char *fieldName) const {
 			return klass->field<T>(internal::Il2CppObject{ ptr }, fieldName);
 		}
 
 		template<typename T>
-		Field<T> static_field(const std::string &fieldName) const {
+		Field<T> static_field(const char *fieldName) const {
 			return klass->static_field<T>(fieldName);
 		}
 

@@ -13,16 +13,14 @@ class il2cpp_binding;
 //Also owns any auxilary il2cpp_ classes, like binding
 class il2cpp_context {
 public:
-	il2cpp_context(HMODULE gameAssemblyModule);
-	~il2cpp_context();
 	il2cpp_binding &getBinding() const;
 
-	il2cppapi::Class* getClass(const std::string &namespaceName, const std::string &className) const;
+	il2cppapi::Class* getClass(const char *namespaceName, const char *className) const;
 	il2cppapi::Class* getClassFromField(const internal::FieldInfo* field) const;
 
-	const internal::MethodInfo *getClassMethod(internal::Il2CppClass* klass, const std::string &methodName, int argsCount) const;
-	const internal::FieldInfo *getClassFieldInfo(internal::Il2CppClass* klass, const std::string &fieldName, bool error = true) const;
-	const internal::PropertyInfo *getClassPropertyInfo(internal::Il2CppClass* klass, const std::string &propName, bool error = true) const;
+	const internal::MethodInfo *getClassMethod(internal::Il2CppClass* klass, const char *methodName, int argsCount) const;
+	const internal::FieldInfo *getClassFieldInfo(internal::Il2CppClass* klass, const char *fieldName, bool error = true) const;
+	const internal::PropertyInfo *getClassPropertyInfo(internal::Il2CppClass* klass, const char *propName, bool error = true) const;
 
 	void getValueFromField(internal::Il2CppObject obj, const internal::FieldInfo* field, void *value) const;
 	void setValueFromField(internal::Il2CppObject obj, const internal::FieldInfo* field, const void *value) const;
@@ -35,17 +33,13 @@ public:
 
 	int32_t getStringLength(const internal::Il2CppString str) const;
 	const internal::Il2CppChar* getStringChars(const internal::Il2CppString str) const;
-	internal::Il2CppString newString(const std::string &str) const;
+	internal::Il2CppString newString(const char *str) const;
 
 	uint32_t getArrayLength(internal::Il2CppObject arr) const;
 	uint32_t getArrayByteLength(internal::Il2CppObject arr) const;
 	uint32_t getArrayStride(internal::Il2CppObject arr) const;
 
-private:
-	std::unique_ptr<il2cpp_binding> mBindingContext;
-	mutable std::unordered_map<std::string, il2cppapi::Class> mClasses;
-
-	//Il2CPP functions for internal data
+protected:
 	internal::FieldInfo* (*il2cpp_class_get_field_from_name)(internal::Il2CppClass* klass, const char* name);
 	void(*il2cpp_field_get_value)(internal::Il2CppObject obj, const internal::FieldInfo* field, void* value);
 	void(*il2cpp_field_set_value)(internal::Il2CppObject obj, const internal::FieldInfo* field, const void *value);
@@ -62,10 +56,13 @@ private:
 	const internal::PropertyInfo* (*il2cpp_class_get_property_from_name)(internal::Il2CppClass * klass, const char *name);
 	const internal::MethodInfo* (*il2cpp_property_get_get_method)(const internal::PropertyInfo * prop);
 	const internal::MethodInfo* (*il2cpp_property_get_set_method)(const internal::PropertyInfo * prop);
-	const int32_t (*il2cpp_string_length)(const internal::Il2CppString str);
+	const int32_t(*il2cpp_string_length)(const internal::Il2CppString str);
 	const internal::Il2CppChar* (*il2cpp_string_chars)(const internal::Il2CppString str);
-	internal::Il2CppString (*il2cpp_string_new_len)(const char* str, uint32_t length);
+	internal::Il2CppString(*il2cpp_string_new_len)(const char* str, uint32_t length);
 	uint32_t(*il2cpp_array_length)(internal::Il2CppObject arr);
 	uint32_t(*il2cpp_array_get_byte_length)(internal::Il2CppObject arr);
 
+	il2cpp_binding &(*mGetBinding)();
+	il2cppapi::Class*(*mGetClass)(const char *, const char *);
+	il2cppapi::Class*(*mGetClassFromField)(const internal::FieldInfo* field);
 };
