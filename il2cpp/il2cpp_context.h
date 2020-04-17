@@ -17,6 +17,7 @@ public:
 
 	il2cppapi::Class* getClass(const char *namespaceName, const char *className) const;
 	il2cppapi::Class* getClassFromField(const internal::FieldInfo* field) const;
+	il2cppapi::Class* getClassFromObject(internal::Il2CppObject obj) const;
 
 	const internal::MethodInfo *getClassMethod(internal::Il2CppClass* klass, const char *methodName, int argsCount) const;
 	const internal::FieldInfo *getClassFieldInfo(internal::Il2CppClass* klass, const char *fieldName, bool error = true) const;
@@ -34,6 +35,8 @@ public:
 	int32_t getStringLength(const internal::Il2CppString str) const;
 	const internal::Il2CppChar* getStringChars(const internal::Il2CppString str) const;
 	internal::Il2CppString newString(const char *str) const;
+
+	std::wstring getCString(const internal::Il2CppString str) const;
 
 	uint32_t getArrayLength(internal::Il2CppObject arr) const;
 	uint32_t getArrayByteLength(internal::Il2CppObject arr) const;
@@ -65,4 +68,5 @@ protected:
 	il2cpp_binding &(*mGetBinding)();
 	il2cppapi::Class*(*mGetClass)(const char *, const char *);
 	il2cppapi::Class*(*mGetClassFromField)(const internal::FieldInfo* field);
+	il2cppapi::Class*(*mGetClassFromObject)(internal::Il2CppObject obj);
 };

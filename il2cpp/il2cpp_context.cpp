@@ -16,6 +16,10 @@ il2cppapi::Class* il2cpp_context::getClassFromField(const internal::FieldInfo* f
 	return mGetClassFromField(field);
 }
 
+il2cppapi::Class* il2cpp_context::getClassFromObject(internal::Il2CppObject obj) const {
+	return mGetClassFromObject(obj);
+}
+
 void il2cpp_context::getValueFromField(internal::Il2CppObject obj, const internal::FieldInfo * field, void * value) const {
 	il2cpp_field_get_value(obj, field, value);
 }
@@ -90,6 +94,10 @@ const internal::Il2CppChar* il2cpp_context::getStringChars(const internal::Il2Cp
 
 internal::Il2CppString il2cpp_context::newString(const char *str) const {
 	return il2cpp_string_new_len(str, (uint32_t)strlen(str));
+}
+
+std::wstring il2cpp_context::getCString(const internal::Il2CppString str) const {
+	return std::wstring(getStringChars(str), getStringLength(str));
 }
 
 uint32_t il2cpp_context::getArrayLength(internal::Il2CppObject arr) const {

@@ -11,7 +11,7 @@
 
 #include <cstddef>
 
-const static semver BindingVersion = { 2, 0, 0 };
+const static semver BindingVersion = { 2, 1, 0 };
 class il2cpp_context;
 using u8 = unsigned char;
 
