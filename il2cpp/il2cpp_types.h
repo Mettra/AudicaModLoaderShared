@@ -48,6 +48,7 @@ struct function_traits {
 template<typename Ret, typename... Args>
 struct function_traits<Ret(Args...)> {
 	using PtrType = Ret(__thiscall *)(internal::Il2CppObject, Args...);
+	using StaticPtrType = Ret(*)(Args...);
 	static const int numArgs = sizeof...(Args);
 };
 
@@ -137,6 +138,12 @@ namespace il2cppapi {
 			auto fn = mGetMethod(this, methodName, function_traits<Fn>::numArgs);
 			return static_cast<typename function_traits<Fn>::PtrType>(fn);
         }
+
+		template<typename Fn>
+		typename function_traits<Fn>::StaticPtrType static_method(const char *methodName) const {
+			auto fn = mGetMethod(this, methodName, function_traits<Fn>::numArgs);
+			return static_cast<typename function_traits<Fn>::StaticPtrType>(fn);
+		}
 
 		template<typename T>
 		Field<T> field(internal::Il2CppObject obj, const char *fieldName) const {
